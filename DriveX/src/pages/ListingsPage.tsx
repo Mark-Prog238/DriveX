@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom"; // 1. Import useSearchParams
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { NavbarSecond } from "../components/NavbarSecond";
 import { ListingCard } from "../components/ListingCard";
-import { fetchListings } from "../components/api";
+import API, { fetchListings } from "../components/api";
 import { Select } from "../ui/Select";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
@@ -13,83 +13,71 @@ export const ListingsPage = () => {
   const [searchParams] = useSearchParams(); // 2. Get URL params
   const [listings, setListings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
 
   // Initialize state from URL params if available
   const [make, setMake] = useState(searchParams.get("make") || "");
   const [model, setModel] = useState(searchParams.get("model") || "");
   const [minPrice, setMinPrice] = useState(searchParams.get("minPrice") || "");
   const [maxPrice, setMaxPrice] = useState(searchParams.get("maxPrice") || "");
-  
+
   const [sort, setSort] = useState("new");
   const [page, setPage] = useState(1);
+  const [makes, setMakes] = useState<{ id: number; name: string }[]>([]);
+
+  // Fetch Makes (brands) for the filter sidebar
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(`${API.BASE_URL}/api/cars/makes`);
+        const j = await r.json();
+        setMakes(j.data || []);
+      } catch (e) {
+        console.error("Failed to fetch makes", e);
+      }
+    })();
+  }, []);
 
   // --- FETCHING LISTINGS ---
   useEffect(() => {
     const load = async () => {
+      setLoading(true);
       try {
-        const res = await fetchListings();
-        if (res.data && Array.isArray(res.data)) {
-          setListings(res.data);
-        } else if (Array.isArray(res)) {
-          setListings(res);
-        } else {
-          setListings([]);
-        }
+        const pageSize = 9;
+        const skip = (page - 1) * pageSize;
+        const res = await fetchListings({
+          limit: pageSize,
+          skip,
+          make: make || undefined,
+          model: model || undefined,
+          minPrice: minPrice || undefined,
+          maxPrice: maxPrice || undefined,
+          sort: sort === "new" ? undefined : sort,
+        });
+        setListings(res.data);
+        setTotal(res.total);
       } catch (error) {
         console.error("Failed to load listings", error);
+        setListings([]);
+        setTotal(0);
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, []);
+  }, [make, model, minPrice, maxPrice, sort, page]);
 
   // Reset page when filters change
   useEffect(() => {
     setPage(1);
   }, [make, model, minPrice, maxPrice, sort]);
 
-  // --- FILTERING LOGIC ---
-  const filtered = useMemo(() => {
-    let arr = [...listings];
-
-    if (make) {
-      arr = arr.filter((x) =>
-        (x.brand || "").toLowerCase().includes(make.toLowerCase())
-      );
-    }
-    if (model) {
-      arr = arr.filter((x) =>
-        (x.model || "").toLowerCase().includes(model.toLowerCase())
-      );
-    }
-    if (minPrice) {
-      arr = arr.filter((x) => (x.price ?? 0) >= Number(minPrice));
-    }
-    if (maxPrice) {
-      arr = arr.filter((x) => (x.price ?? 0) <= Number(maxPrice));
-    }
-
-    // Sorting
-    if (sort === "new") {
-      arr.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    } else if (sort === "price_asc") {
-      arr.sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
-    } else if (sort === "price_desc") {
-      arr.sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
-    }
-
-    return arr;
-  }, [listings, make, model, minPrice, maxPrice, sort]);
-
   const pageSize = 9;
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageItems = listings;
 
-  const uniqueMakes = useMemo(() => {
-    return [...new Set(listings.map((x) => x.brand).filter(Boolean))];
-  }, [listings]);
-  
+  const uniqueMakes = makes.map((m) => m.name);
+
   const handleResetFilters = () => {
     setMake("");
     setModel("");
@@ -101,37 +89,43 @@ export const ListingsPage = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col pb-10">
       <NavbarSecond />
-      
+
       <section className="mx-auto max-w-7xl px-4 py-8 flex-1">
-        <h1 className="text-3xl font-black text-white pb-6 tracking-tight">Browse Inventory</h1>
-        
+        <h1 className="text-3xl font-black text-white pb-6 tracking-tight">
+          Browse Inventory
+        </h1>
+
         <div className="grid gap-8 lg:grid-cols-[300px_1fr]">
-          
           {/* --- SIDEBAR (FILTERS) --- */}
           <aside className="h-fit rounded-xl bg-surface p-6 shadow-xl border border-white/10 lg:sticky lg:top-20">
             <h2 className="font-bold text-white mb-4 flex items-center gap-2">
-                <Search size={18} className="text-primary"/> Refine Search
+              <Search size={18} className="text-primary" /> Refine Search
             </h2>
             <div className="space-y-4">
-              
               {/* Make Select */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-text-muted uppercase ml-1">Make</label>
+                <label className="text-xs font-bold text-text-muted uppercase ml-1">
+                  Make
+                </label>
                 <Select
                   value={make}
                   onChange={(e: any) => setMake(e.target.value)}
-                  className="input-field" 
+                  className="input-field"
                 >
                   <option value="">All Makes</option>
                   {uniqueMakes.map((m) => (
-                    <option key={m} value={m} className="text-white">{m}</option>
+                    <option key={m} value={m} className="text-white">
+                      {m}
+                    </option>
                   ))}
                 </Select>
               </div>
 
               {/* Model Input */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-text-muted uppercase ml-1">Model</label>
+                <label className="text-xs font-bold text-text-muted uppercase ml-1">
+                  Model
+                </label>
                 <Input
                   value={model}
                   onChange={(e: any) => setModel(e.target.value)}
@@ -139,10 +133,12 @@ export const ListingsPage = () => {
                   placeholder="e.g. Golf, 3 Series"
                 />
               </div>
-              
+
               {/* Price Range */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-text-muted uppercase ml-1 flex items-center gap-1"><DollarSign size={14}/> Price (€)</label>
+                <label className="text-xs font-bold text-text-muted uppercase ml-1 flex items-center gap-1">
+                  <DollarSign size={14} /> Price (€)
+                </label>
                 <div className="grid grid-cols-2 gap-2">
                   <Input
                     value={minPrice}
@@ -163,7 +159,9 @@ export const ListingsPage = () => {
 
               {/* Sort By */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-text-muted uppercase ml-1">Sort By</label>
+                <label className="text-xs font-bold text-text-muted uppercase ml-1">
+                  Sort By
+                </label>
                 <Select
                   value={sort}
                   onChange={(e: any) => setSort(e.target.value)}
@@ -176,12 +174,12 @@ export const ListingsPage = () => {
               </div>
 
               {/* Reset Button */}
-              <Button 
-                variant="secondary" 
+              <Button
+                variant="secondary"
                 onClick={handleResetFilters}
                 className="w-full mt-2 border-white/10 hover:bg-white/5 flex items-center justify-center"
               >
-                <X size={16} className="mr-2"/>
+                <X size={16} className="mr-2" />
                 <p className="text-white">Reset Filters</p>
               </Button>
             </div>
@@ -193,11 +191,15 @@ export const ListingsPage = () => {
               <div className="grid place-items-center h-64 text-text-muted">
                 Loading inventory...
               </div>
-            ) : filtered.length === 0 ? (
+            ) : total === 0 && !loading ? (
               <div className="text-center py-12 bg-surface rounded-xl border border-white/10">
-                <Car size={36} className="mx-auto text-text-muted mb-4"/>
-                <p className="text-xl text-white">No cars found matching your criteria.</p>
-                <p className="text-text-muted">Try resetting the filters or check back later.</p>
+                <Car size={36} className="mx-auto text-text-muted mb-4" />
+                <p className="text-xl text-white">
+                  No cars found matching your criteria.
+                </p>
+                <p className="text-text-muted">
+                  Try resetting the filters or check back later.
+                </p>
               </div>
             ) : (
               <>
@@ -206,7 +208,7 @@ export const ListingsPage = () => {
                     <ListingCard key={l._id} listing={l} />
                   ))}
                 </div>
-                
+
                 <div className="mt-8 flex justify-center">
                   <Pagination
                     page={page}
